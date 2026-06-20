@@ -1,5 +1,3 @@
-#![allow(unused_imports, dead_code)] // TODO(Task 4): remove
-
 //! Layer 2 — handler re-execution. Re-drives real `Actor::handle` over a recorded
 //! log in canonical order; payloads come from re-execution, the log supplies order
 //! and verification. `ReplayDispatch` is the second `Dispatch` backend (prod is the
@@ -7,7 +5,7 @@
 
 use lichtung_clock::{ActorId, Lamport, VectorClock};
 use lichtung_core::{
-    compute_event, emit_event, recv_event, Actor, Addr, AnySink, Context, Dispatch, Envelope,
+    recv_event, Actor, Addr, AnySink, Context, Dispatch, Envelope,
     MailboxTx,
 };
 use lichtung_log::{CausalEvent, Op};
