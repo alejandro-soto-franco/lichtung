@@ -12,8 +12,17 @@ impl From<&str> for ActorId {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct VectorClock(BTreeMap<ActorId, u64>);
+
+impl PartialEq for VectorClock {
+    fn eq(&self, other: &Self) -> bool {
+        // Two clocks are equal if all actors have the same timestamp (treating missing as 0)
+        let all_keys: std::collections::BTreeSet<_> =
+            self.0.keys().chain(other.0.keys()).collect();
+        all_keys.iter().all(|k| self.get(k) == other.get(k))
+    }
+}
 
 impl VectorClock {
     pub fn new() -> Self {
