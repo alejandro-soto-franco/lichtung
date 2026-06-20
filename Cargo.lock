@@ -743,6 +743,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lichtung-replay"
+version = "0.0.0"
+dependencies = [
+ "lichtung-clock",
+ "lichtung-core",
+ "lichtung-log",
+ "lichtung-prod",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
