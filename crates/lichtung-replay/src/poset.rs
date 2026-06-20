@@ -40,10 +40,16 @@ impl<'a> Poset<'a> {
         for (i, e) in events.iter().enumerate() {
             by_actor.entry(e.actor.as_str()).or_default().push(i);
         }
-        for idxs in by_actor.values() {
+        for (actor, idxs) in &by_actor {
             let mut s = idxs.clone();
             s.sort_by_key(|&i| events[i].seq);
             for w in s.windows(2) {
+                if events[w[0]].seq == events[w[1]].seq {
+                    return Err(ReplayError::DuplicateSeq(
+                        actor.to_string(),
+                        events[w[0]].seq,
+                    ));
+                }
                 edges.push((w[0], w[1]));
             }
         }
@@ -53,7 +59,9 @@ impl<'a> Poset<'a> {
         for (i, e) in events.iter().enumerate() {
             if e.op == Op::Emit {
                 if let Some(m) = &e.msg_id {
-                    emit_of.insert(m.as_str(), i);
+                    if emit_of.insert(m.as_str(), i).is_some() {
+                        return Err(ReplayError::DuplicateEmit(m.clone()));
+                    }
                 }
             }
         }
@@ -134,6 +142,24 @@ mod tests {
         ];
         let err = Poset::build(&events).unwrap().validate().unwrap_err();
         assert!(matches!(err, ReplayError::Inconsistent(_, _)));
+    }
+
+    #[test]
+    fn duplicate_emit_msg_id_is_rejected() {
+        let events = vec![
+            with_msg(ev("a", 1, Op::Emit, 1, &[("a", 1)]), "dup", "a", "b"),
+            with_msg(ev("a", 2, Op::Emit, 2, &[("a", 2)]), "dup", "a", "c"),
+        ];
+        assert!(matches!(Poset::build(&events).unwrap_err(), ReplayError::DuplicateEmit(_)));
+    }
+
+    #[test]
+    fn duplicate_actor_seq_is_rejected() {
+        let events = vec![
+            ev("a", 1, Op::Compute, 1, &[("a", 1)]),
+            ev("a", 1, Op::Compute, 2, &[("a", 1)]), // same (actor, seq)
+        ];
+        assert!(matches!(Poset::build(&events).unwrap_err(), ReplayError::DuplicateSeq(_, _)));
     }
 
     #[test]

@@ -3,6 +3,10 @@
 pub enum ReplayError {
     #[error("recv event {0} has no matching emit (msg_id {1:?})")]
     MissingEmit(String, String),
+    #[error("duplicate emit for msg_id {0}: a msg_id must have exactly one emit")]
+    DuplicateEmit(String),
+    #[error("duplicate event coordinate (actor {0}, seq {1}): each (actor, seq) must be unique")]
+    DuplicateSeq(String, u64),
     #[error("causal inconsistency: edge {0} -> {1}, but their vclocks are not strictly ordered")]
     Inconsistent(String, String),
     #[error("poset has a cycle; {0} events could not be scheduled")]

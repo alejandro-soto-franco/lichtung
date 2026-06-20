@@ -42,14 +42,14 @@ pub fn replay_log(events: &[CausalEvent]) -> Result<Replayed, ReplayError> {
     poset.validate()?;
     let order = linearize(&poset)?;
 
-    let timeline: Vec<CausalEvent> = order.iter().map(|&i| events[i].clone()).collect();
+    let timeline: Vec<CausalEvent> = order.iter().map(|&i| poset.events[i].clone()).collect();
     let edges: Vec<(String, String)> = poset
         .edges
         .iter()
-        .map(|&(a, b)| (events[a].id.clone(), events[b].id.clone()))
+        .map(|&(a, b)| (poset.events[a].id.clone(), poset.events[b].id.clone()))
         .collect();
     let concurrent = concurrent_pairs(&poset);
-    let event_ids: Vec<String> = order.iter().map(|&i| events[i].id.clone()).collect();
+    let event_ids: Vec<String> = order.iter().map(|&i| poset.events[i].id.clone()).collect();
 
     Ok(Replayed {
         timeline,
