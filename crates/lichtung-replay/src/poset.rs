@@ -2,6 +2,23 @@ use crate::error::ReplayError;
 use lichtung_log::{CausalEvent, Op};
 use std::collections::BTreeMap;
 
+/// Strict product (vector-clock) order on string-keyed clocks: `a < b` iff
+/// `a[k] <= b[k]` for every component and `a != b`. Missing components are 0.
+fn hb_strict(a: &BTreeMap<String, u64>, b: &BTreeMap<String, u64>) -> bool {
+    let mut saw_less = false;
+    for k in a.keys().chain(b.keys()) {
+        let x = a.get(k).copied().unwrap_or(0);
+        let y = b.get(k).copied().unwrap_or(0);
+        if x > y {
+            return false; // a exceeds b somewhere -> not a <= b
+        }
+        if x < y {
+            saw_less = true;
+        }
+    }
+    saw_less
+}
+
 /// The reconstructed happens-before poset over a recorded log. Nodes are event
 /// indices `0..events.len()`; `edges` are the DIRECT causal edges (program order
 /// per actor + message `emit -> recv`).
@@ -52,6 +69,21 @@ impl<'a> Poset<'a> {
 
         Ok(Poset { events, edges })
     }
+
+    /// Fidelity check: every reconstructed causal edge must be reflected in the
+    /// recorded vector clocks (`a -> b` implies `V(a) < V(b)`). A log that fails
+    /// this is not a faithful causal record — reject it loudly.
+    pub fn validate(&self) -> Result<(), ReplayError> {
+        for &(a, b) in &self.edges {
+            if !hb_strict(&self.events[a].vclock, &self.events[b].vclock) {
+                return Err(ReplayError::Inconsistent(
+                    self.events[a].id.clone(),
+                    self.events[b].id.clone(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -82,5 +114,37 @@ mod tests {
         let events = vec![with_msg(ev("a", 1, Op::Recv, 1, &[("a", 1)]), "ghost", "x", "a")];
         let err = Poset::build(&events).unwrap_err();
         assert!(matches!(err, ReplayError::MissingEmit(_, _)));
+    }
+
+    #[test]
+    fn valid_log_passes_validation() {
+        let events = vec![
+            with_msg(ev("world", 1, Op::Emit, 1, &[("world", 1)]), "m1", "world", "a"),
+            with_msg(ev("a", 1, Op::Recv, 2, &[("world", 1), ("a", 1)]), "m1", "world", "a"),
+        ];
+        Poset::build(&events).unwrap().validate().unwrap();
+    }
+
+    #[test]
+    fn inconsistent_vclock_on_an_edge_is_rejected() {
+        // The recv's vclock does NOT dominate the emit's (missing the world:1 it must carry).
+        let events = vec![
+            with_msg(ev("world", 1, Op::Emit, 1, &[("world", 1)]), "m1", "world", "a"),
+            with_msg(ev("a", 1, Op::Recv, 2, &[("a", 1)]), "m1", "world", "a"),
+        ];
+        let err = Poset::build(&events).unwrap().validate().unwrap_err();
+        assert!(matches!(err, ReplayError::Inconsistent(_, _)));
+    }
+
+    #[test]
+    fn hb_strict_basics() {
+        use std::collections::BTreeMap;
+        let a: BTreeMap<String, u64> = [("x".to_string(), 1)].into();
+        let b: BTreeMap<String, u64> = [("x".to_string(), 1), ("y".to_string(), 1)].into();
+        assert!(super::hb_strict(&a, &b)); // a < b
+        assert!(!super::hb_strict(&b, &a)); // not b < a
+        assert!(!super::hb_strict(&a, &a)); // irreflexive
+        let c: BTreeMap<String, u64> = [("y".to_string(), 1)].into();
+        assert!(!super::hb_strict(&a, &c)); // concurrent {x:1} vs {y:1}
     }
 }
