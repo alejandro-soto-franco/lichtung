@@ -25,9 +25,9 @@ impl Dispatch for Capture {
     }
 }
 
-/// A no-op sink for building an Addr in the test.
+/// A no-op sink for building an Addr in the test (the Addr carries its own id).
 #[derive(Clone)]
-struct NullTx(ActorId);
+struct NullTx;
 impl lichtung_core::MailboxTx for NullTx {
     fn try_send(&self, _env: Envelope) -> Result<(), Envelope> {
         Ok(())
@@ -43,7 +43,7 @@ fn send_increments_own_clock_and_emits() {
     let mut backend = Capture::default();
 
     let peer_id = ActorId::from("b");
-    let sink: Arc<dyn AnySink> = Arc::new(NullTx(peer_id.clone()));
+    let sink: Arc<dyn AnySink> = Arc::new(NullTx);
     let peer: Addr<u32> = Addr::new(peer_id.clone(), sink);
 
     {
@@ -64,7 +64,8 @@ fn send_increments_own_clock_and_emits() {
     assert_eq!(*d.msg.downcast_ref::<u32>().unwrap(), 99);
 }
 
-// Minimal actor to prove the trait + Context type line up.
+// Minimal actor to prove the trait + Context type line up (compile-only check).
+#[allow(dead_code)]
 struct Echo;
 impl Actor for Echo {
     type Msg = ();
