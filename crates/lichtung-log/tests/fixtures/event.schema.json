@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CausalEvent",
+  "type": "object",
+  "required": ["id", "actor", "seq", "op", "vclock", "lamport"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "actor": { "type": "string", "minLength": 1 },
+    "seq": { "type": "integer", "minimum": 0 },
+    "op": { "type": "string", "enum": ["emit", "recv", "compute", "report", "drop"] },
+    "vclock": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "lamport": { "type": "integer", "minimum": 0 },
+    "msg_id": { "type": ["string", "null"] },
+    "src": { "type": ["string", "null"] },
+    "dst": { "type": ["string", "null"] },
+    "value": { "type": ["number", "null"] },
+    "payload_hash": { "type": ["string", "null"] }
+  }
+}
