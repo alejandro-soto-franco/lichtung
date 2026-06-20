@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lichtung-clock", "crates/lichtung-log", "crates/lichtung-core"]
+members = ["crates/lichtung-clock", "crates/lichtung-log", "crates/lichtung-core", "crates/lichtung-prod"]
 
 [workspace.package]
 edition = "2021"

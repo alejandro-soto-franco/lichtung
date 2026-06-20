@@ -1,0 +1,21 @@
+[package]
+name = "lichtung-prod"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lichtung-core = { path = "../lichtung-core" }
+lichtung-clock = { path = "../lichtung-clock" }
+lichtung-log = { path = "../lichtung-log" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+jsonschema = "0.20"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
+criterion = { workspace = true }
+
+[[bench]]
+name = "throughput"
+harness = false
