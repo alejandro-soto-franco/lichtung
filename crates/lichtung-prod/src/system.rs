@@ -126,6 +126,9 @@ impl System {
         writer.await.expect("writer task panicked")
     }
 
+    /// Accessor used only by in-crate tests to drive quiescence directly.
+    /// `#[cfg(test)]` so it does not exist in (and warn from) non-test builds.
+    #[cfg(test)]
     pub(crate) fn shared(&self) -> &Arc<SharedRuntime> {
         &self.shared
     }
