@@ -2,12 +2,16 @@
 
 mod actor;
 mod addr;
+mod context;
+mod dispatch;
 mod envelope;
 mod event;
 mod mailbox;
 
 pub use actor::Actor;
 pub use addr::Addr;
+pub use context::Context;
+pub use dispatch::Dispatch;
 pub use envelope::Envelope;
 pub use event::{compute_event, emit_event, recv_event};
 pub use mailbox::{AnySink, Mailbox, MailboxRx, MailboxTx};

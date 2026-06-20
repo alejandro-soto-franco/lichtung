@@ -1,5 +1,4 @@
-/// Temporary shim — replaced by the real `Context` in Task 4.
-pub struct Context;
+use crate::context::Context;
 
 /// A unit of computation that processes one message at a time. `handle` is
 /// synchronous: it may `send`/`compute` via the context but never awaits.
