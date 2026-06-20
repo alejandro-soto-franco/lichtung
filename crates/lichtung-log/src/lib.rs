@@ -1,0 +1,1 @@
+//! Lichtung log crate (placeholder).
