@@ -51,7 +51,11 @@ impl VectorClock {
     }
 
     pub fn set(&mut self, actor: ActorId, value: u64) {
-        self.0.insert(actor, value);
+        if value == 0 {
+            self.0.remove(&actor);
+        } else {
+            self.0.insert(actor, value);
+        }
     }
 
     pub fn increment(&mut self, actor: &ActorId) {
@@ -60,8 +64,12 @@ impl VectorClock {
 
     pub fn merge(&mut self, other: &VectorClock) {
         for (actor, &v) in &other.0 {
-            let slot = self.0.entry(actor.clone()).or_insert(0);
-            *slot = (*slot).max(v);
+            let new = self.get(actor).max(v);
+            if new == 0 {
+                self.0.remove(actor);
+            } else {
+                self.0.insert(actor.clone(), new);
+            }
         }
     }
 
@@ -169,5 +177,36 @@ mod tests {
         vc.set(ActorId::from("rng"), 3);
         let m = vc.to_string_map();
         assert_eq!(m.get("rng"), Some(&3));
+    }
+
+    #[test]
+    fn set_zero_removes_entry_canonical() {
+        let mut vc = VectorClock::new();
+        vc.set(ActorId::from("a"), 0);
+        assert!(vc.to_string_map().is_empty(), "set(_,0) must not store a 0 entry");
+        vc.set(ActorId::from("a"), 3);
+        vc.set(ActorId::from("a"), 0);
+        assert!(vc.to_string_map().is_empty(), "setting back to 0 must remove the entry");
+    }
+
+    #[test]
+    fn to_string_map_never_emits_zero() {
+        let mut vc = VectorClock::new();
+        vc.set(ActorId::from("a"), 2);
+        vc.set(ActorId::from("b"), 0);
+        let m = vc.to_string_map();
+        assert_eq!(m.get("a"), Some(&2));
+        assert!(m.get("b").is_none(), "wire vclock must omit zero-valued components");
+    }
+
+    #[test]
+    fn merge_keeps_representation_canonical() {
+        // semantics unchanged for nonzero, and no 0 entries introduced
+        let mut a = vc(&[("a", 2), ("b", 1)]);
+        let b = vc(&[("a", 1), ("b", 5)]);
+        a.merge(&b);
+        assert_eq!(a.get(&ActorId::from("a")), 2);
+        assert_eq!(a.get(&ActorId::from("b")), 5);
+        assert!(a.to_string_map().values().all(|&v| v != 0));
     }
 }
