@@ -79,7 +79,8 @@ async fn fanout_log_is_schema_valid_with_concurrency() {
 
     // Non-vacuity guard: the run must have produced a log, or the per-event
     // assertions below would pass with zero iterations. The fan-out/fan-in
-    // topology emits 14 events (1 world emit + 4 source/worker emits ... etc.).
+    // topology emits 14 events: world emit; source recv; 2 source emits;
+    // per worker (×2) recv+compute+emit (6); per sink message (×2) recv+compute (4).
     assert!(
         events.len() >= 10,
         "expected a non-trivial causal log, got {} events",

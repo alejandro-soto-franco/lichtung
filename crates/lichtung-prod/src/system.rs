@@ -55,7 +55,6 @@ async fn actor_loop<A: Actor>(
 /// origin with `send_external`, then `run_until_quiescent`.
 pub struct System {
     shared: Arc<SharedRuntime>,
-    next_actor: u64,
     handles: Vec<JoinHandle<()>>,
     writer: Option<JoinHandle<Result<usize, lichtung_log::LogError>>>,
     senders: Vec<crate::mailbox::TokioTx>,
@@ -67,12 +66,11 @@ impl System {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<CausalEvent>();
         let writer = crate::logwriter::spawn_log_writer(rx, w);
         let shared = Arc::new(SharedRuntime::new(tx));
-        System { shared, next_actor: 0, handles: Vec::new(), writer: Some(writer), senders: Vec::new() }
+        System { shared, handles: Vec::new(), writer: Some(writer), senders: Vec::new() }
     }
 
     /// Spawn an actor with a stable, human-readable name (appears in the log/viz).
     pub fn spawn<A: Actor>(&mut self, name: &str, actor: A) -> Addr<A::Msg> {
-        self.next_actor += 1;
         let id = ActorId::from(name);
         let (tx, rx) = TokioMailbox::unbounded();
         self.senders.push(tx.clone());
