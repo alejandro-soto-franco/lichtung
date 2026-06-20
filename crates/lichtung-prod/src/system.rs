@@ -57,9 +57,8 @@ pub struct System {
     shared: Arc<SharedRuntime>,
     next_actor: u64,
     handles: Vec<JoinHandle<()>>,
-    // Task 7 uses writer for shutdown/flush; suppress dead_code until then.
-    #[allow(dead_code)]
     writer: Option<JoinHandle<Result<usize, lichtung_log::LogError>>>,
+    senders: Vec<crate::mailbox::TokioTx>,
 }
 
 impl System {
@@ -68,7 +67,7 @@ impl System {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<CausalEvent>();
         let writer = crate::logwriter::spawn_log_writer(rx, w);
         let shared = Arc::new(SharedRuntime::new(tx));
-        System { shared, next_actor: 0, handles: Vec::new(), writer: Some(writer) }
+        System { shared, next_actor: 0, handles: Vec::new(), writer: Some(writer), senders: Vec::new() }
     }
 
     /// Spawn an actor with a stable, human-readable name (appears in the log/viz).
@@ -76,10 +75,55 @@ impl System {
         self.next_actor += 1;
         let id = ActorId::from(name);
         let (tx, rx) = TokioMailbox::unbounded();
+        self.senders.push(tx.clone());
         let sink: Arc<dyn AnySink> = Arc::new(tx);
         let h = tokio::spawn(actor_loop::<A>(actor, id.clone(), rx, self.shared.clone()));
         self.handles.push(h);
         Addr::new(id, sink)
+    }
+
+    /// Inject the single causal origin: a message from the synthetic `world`
+    /// world-line. Records the `world` emit so every downstream `recv` pairs
+    /// with an `emit` by `msg_id`.
+    pub fn send_external<M: Send + 'static>(&self, to: &Addr<M>, msg: M) {
+        let world = ActorId::from("world");
+        let mut clock = VectorClock::new();
+        clock.increment(&world); // {world: 1}
+        let msg_id = self.shared.next_msg_id();
+        let env = lichtung_core::Envelope {
+            msg: Box::new(msg),
+            vclock: clock,
+            lamport: Lamport(1),
+            msg_id,
+            src: world.clone(),
+            dst: to.id().clone(),
+        };
+        self.shared.record(lichtung_core::emit_event(&world, 1, &env));
+        self.shared.inc_in_flight();
+        let _ = to.deliver(env);
+    }
+
+    /// Drive to quiescence (no messages in flight), then shut down cleanly:
+    /// abort idle actor tasks, close the event channel, and await the writer's
+    /// final flush. Returns the number of events written.
+    pub async fn run_until_quiescent(mut self) -> Result<usize, lichtung_log::LogError> {
+        loop {
+            let notified = self.shared.quiescent().notified();
+            if self.shared.in_flight() == 0 {
+                break;
+            }
+            notified.await;
+        }
+        for h in &self.handles {
+            h.abort();
+        }
+        for h in self.handles.drain(..) {
+            let _ = h.await; // observe the abort so the future (and its Arc) is dropped
+        }
+        let writer = self.writer.take().expect("writer present");
+        self.senders.clear();
+        drop(self.shared);
+        writer.await.expect("writer task panicked")
     }
 
     pub(crate) fn shared(&self) -> &Arc<SharedRuntime> {
@@ -144,5 +188,60 @@ mod tests {
         }
         // Flush path is exercised fully in Task 7; here just assert the echo ran.
         assert_eq!(sys.shared().in_flight(), 0);
+    }
+
+    struct Relay {
+        next: Addr<u32>,
+    }
+    impl Actor for Relay {
+        type Msg = u32;
+        fn handle(&mut self, msg: u32, ctx: &mut Context) {
+            ctx.send(&self.next, msg + 1);
+        }
+    }
+
+    struct Sink;
+    impl Actor for Sink {
+        type Msg = u32;
+        fn handle(&mut self, _msg: u32, ctx: &mut Context) {
+            ctx.compute();
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn relay_drains_and_writes_valid_log() {
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        struct W(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for W {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut sys = System::new(W(buf.clone()));
+        let sink = sys.spawn("sink", Sink);
+        let relay = sys.spawn("relay", Relay { next: sink.clone() });
+
+        sys.send_external(&relay, 1u32);
+        let written = sys.run_until_quiescent().await.unwrap();
+
+        // world emit + relay recv + relay emit + sink recv + sink compute = 5 events.
+        assert_eq!(written, 5);
+        let bytes = buf.lock().unwrap().clone();
+        let events = lichtung_log::read_events(bytes.as_slice()).unwrap();
+        assert_eq!(events.len(), 5);
+        // Every recv pairs with a prior emit of the same msg_id (M2's poset edge).
+        use std::collections::HashSet;
+        let emits: HashSet<_> = events.iter()
+            .filter(|e| e.op == lichtung_log::Op::Emit)
+            .filter_map(|e| e.msg_id.clone())
+            .collect();
+        for e in events.iter().filter(|e| e.op == lichtung_log::Op::Recv) {
+            assert!(emits.contains(e.msg_id.as_ref().unwrap()), "recv has no matching emit");
+        }
     }
 }
