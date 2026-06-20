@@ -3,6 +3,23 @@
 use std::collections::BTreeMap;
 use std::cmp::Ordering;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct Lamport(pub u64);
+
+impl Lamport {
+    /// Local event: advance and return the new stamp.
+    pub fn tick(&mut self) -> u64 {
+        self.0 += 1;
+        self.0
+    }
+
+    /// Receive a message stamped `other`: max then advance.
+    pub fn update(&mut self, other: Lamport) -> u64 {
+        self.0 = self.0.max(other.0) + 1;
+        self.0
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ActorId(pub String);
 
@@ -54,6 +71,11 @@ impl VectorClock {
 
     pub fn concurrent(&self, other: &VectorClock) -> bool {
         self.partial_cmp(other).is_none()
+    }
+
+    /// Wire form: actor-name → counter, matching the causal-log `vclock` object.
+    pub fn to_string_map(&self) -> BTreeMap<String, u64> {
+        self.0.iter().map(|(k, v)| (k.0.clone(), *v)).collect()
     }
 }
 
@@ -130,5 +152,22 @@ mod tests {
         a.merge(&b);
         assert_eq!(a.get(&ActorId::from("a")), 2);
         assert_eq!(a.get(&ActorId::from("b")), 5);
+    }
+
+    #[test]
+    fn lamport_tick_and_update() {
+        let mut l = Lamport::default();
+        assert_eq!(l.tick(), 1);
+        assert_eq!(l.tick(), 2);
+        // receiving a message stamped 5: max(2,5)+1 = 6
+        assert_eq!(l.update(Lamport(5)), 6);
+    }
+
+    #[test]
+    fn vclock_to_string_map() {
+        let mut vc = VectorClock::new();
+        vc.set(ActorId::from("rng"), 3);
+        let m = vc.to_string_map();
+        assert_eq!(m.get("rng"), Some(&3));
     }
 }
