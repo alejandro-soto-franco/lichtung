@@ -16,6 +16,10 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    /// Construct a context bound to one actor's clock/lamport/seq and a runtime
+    /// backend. `#[doc(hidden)]`: the surface a runtime author (prod/replay) uses
+    /// to drive an actor; not part of the end-user API (users only see `&mut Context`).
+    #[doc(hidden)]
     pub fn new(
         id: &'a ActorId,
         clock: &'a mut VectorClock,
