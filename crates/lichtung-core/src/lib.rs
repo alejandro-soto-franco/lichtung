@@ -1,12 +1,16 @@
 //! lichtung-core: the dual-mode actor boundary. Traits only, zero executor code.
 
 mod actor;
+mod addr;
 mod envelope;
 mod event;
+mod mailbox;
 
 pub use actor::Actor;
+pub use addr::Addr;
 pub use envelope::Envelope;
 pub use event::{compute_event, emit_event, recv_event};
+pub use mailbox::{AnySink, Mailbox, MailboxRx, MailboxTx};
 
 #[cfg(test)]
 mod tests {
