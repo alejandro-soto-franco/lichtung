@@ -77,6 +77,15 @@ async fn fanout_log_is_schema_valid_with_concurrency() {
     let bytes = buf.0.lock().unwrap().clone();
     let events = lichtung_log::read_events(bytes.as_slice()).unwrap();
 
+    // Non-vacuity guard: the run must have produced a log, or the per-event
+    // assertions below would pass with zero iterations. The fan-out/fan-in
+    // topology emits 14 events (1 world emit + 4 source/worker emits ... etc.).
+    assert!(
+        events.len() >= 10,
+        "expected a non-trivial causal log, got {} events",
+        events.len()
+    );
+
     // 1) Schema conformance: every event validates against the canonical schema.
     let schema_src = std::fs::read_to_string(
         concat!(env!("CARGO_MANIFEST_DIR"), "/../lichtung-log/tests/fixtures/event.schema.json"),
@@ -95,6 +104,9 @@ async fn fanout_log_is_schema_valid_with_concurrency() {
         .filter(|e| e.op == Op::Emit)
         .map(|e| (e.msg_id.clone().unwrap(), e))
         .collect();
+    // Non-vacuity guard: there must be recv events for the embedding check to mean anything.
+    let recv_count = events.iter().filter(|e| e.op == Op::Recv).count();
+    assert!(recv_count > 0, "expected recv events to verify the embedding");
     for r in events.iter().filter(|e| e.op == Op::Recv) {
         let em = emits.get(r.msg_id.as_ref().unwrap()).expect("recv without emit");
         for (k, &v) in &em.vclock {
