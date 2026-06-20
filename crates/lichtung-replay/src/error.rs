@@ -12,3 +12,12 @@ pub enum ReplayError {
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 }
+
+impl From<lichtung_log::LogError> for ReplayError {
+    fn from(e: lichtung_log::LogError) -> Self {
+        match e {
+            lichtung_log::LogError::Io(e) => ReplayError::Io(e),
+            lichtung_log::LogError::Json(e) => ReplayError::Json(e),
+        }
+    }
+}
