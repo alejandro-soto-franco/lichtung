@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Lamport(pub u64);
@@ -20,12 +21,38 @@ impl Lamport {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ActorId(pub String);
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct ActorId(pub Arc<str>);
 
 impl From<&str> for ActorId {
     fn from(s: &str) -> Self {
-        ActorId(s.to_string())
+        ActorId(Arc::from(s))
+    }
+}
+
+impl ActorId {
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ActorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl serde::Serialize for ActorId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ActorId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(ActorId(Arc::from(s.as_str())))
     }
 }
 
@@ -46,6 +73,7 @@ impl VectorClock {
         VectorClock(BTreeMap::new())
     }
 
+    #[inline]
     pub fn get(&self, actor: &ActorId) -> u64 {
         self.0.get(actor).copied().unwrap_or(0)
     }
@@ -58,10 +86,12 @@ impl VectorClock {
         }
     }
 
+    #[inline]
     pub fn increment(&mut self, actor: &ActorId) {
         *self.0.entry(actor.clone()).or_insert(0) += 1;
     }
 
+    #[inline]
     pub fn merge(&mut self, other: &VectorClock) {
         for (actor, &v) in &other.0 {
             let new = self.get(actor).max(v);
@@ -83,11 +113,12 @@ impl VectorClock {
 
     /// Wire form: actor-name → counter, matching the causal-log `vclock` object.
     pub fn to_string_map(&self) -> BTreeMap<String, u64> {
-        self.0.iter().map(|(k, v)| (k.0.clone(), *v)).collect()
+        self.0.iter().map(|(k, v)| (k.0.to_string(), *v)).collect()
     }
 }
 
 impl PartialOrd for VectorClock {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let mut saw_less = false;
         let mut saw_greater = false;
@@ -208,5 +239,22 @@ mod tests {
         assert_eq!(a.get(&ActorId::from("a")), 2);
         assert_eq!(a.get(&ActorId::from("b")), 5);
         assert!(a.to_string_map().values().all(|&v| v != 0));
+    }
+
+    #[test]
+    fn actor_id_serializes_as_bare_string() {
+        let id = ActorId::from("worker-a");
+        assert_eq!(serde_json::to_string(&id).unwrap(), "\"worker-a\"");
+        let back: ActorId = serde_json::from_str("\"worker-a\"").unwrap();
+        assert_eq!(back, id);
+        assert_eq!(id.as_str(), "worker-a");
+    }
+
+    #[test]
+    fn actor_id_clone_is_shared() {
+        let a = ActorId::from("x");
+        let b = a.clone();
+        // Same underlying Arc allocation (refcount bump, not a new string).
+        assert!(std::sync::Arc::ptr_eq(&a.0, &b.0));
     }
 }

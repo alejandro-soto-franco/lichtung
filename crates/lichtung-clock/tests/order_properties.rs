@@ -6,7 +6,7 @@ fn vclock_strategy() -> impl Strategy<Value = VectorClock> {
     proptest::collection::btree_map("[a-d]", 0u64..6, 0..4).prop_map(|m| {
         let mut vc = VectorClock::new();
         for (k, v) in m {
-            vc.set(ActorId(k), v);
+            vc.set(ActorId::from(k.as_str()), v);
         }
         vc
     })
