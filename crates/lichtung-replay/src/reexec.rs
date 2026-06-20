@@ -255,7 +255,16 @@ impl ReplaySystem {
             .map(|v| v.iter().map(|e| (*e).clone()).collect())
             .unwrap_or_default();
         for (k, we) in world_emits.iter().enumerate() {
-            let m = we.msg_id.as_deref().and_then(parse_mid).unwrap_or(0);
+            let m = match we.msg_id.as_deref().and_then(parse_mid) {
+                Some(m) => m,
+                None => {
+                    state.divergences.push(Divergence {
+                        event_id: we.id.clone(),
+                        detail: "world emit has a malformed/absent msg_id".into(),
+                    });
+                    continue;
+                }
+            };
             let (to_id, msg) = match self.origins.get_mut(k) {
                 Some((id, boxed)) => (id.clone(), std::mem::replace(boxed, Box::new(()))),
                 None => {
@@ -364,6 +373,7 @@ impl ReplaySystem {
         state: &mut ReplayState<'_>,
         msg: Option<Box<dyn Any + Send>>,
     ) {
+        // precondition: both callers guarantee dst ∈ self.actors (started pass iterates keys; recv path checks contains_key before calling)
         let actor = self.actors.get_mut(dst).expect("actor exists");
         let entry = clocks
             .entry(dst.clone())
@@ -496,6 +506,24 @@ mod tests {
         let outcome = sys.replay(&log).unwrap();
         assert!(outcome.is_faithful(), "expected faithful replay, got {:?}", outcome.divergences);
         assert_eq!(outcome.replayed.timeline.len(), 5);
+    }
+
+    #[test]
+    fn next_msg_id_over_send_returns_sentinel_and_diverges() {
+        // Actor "a" has exactly ONE recorded emit (m5). A second call to next_msg_id()
+        // simulates a handler sending more messages than were recorded.
+        let log = vec![rec_emit("a", 1, "m5", "b", 1, &[("a", 1)])];
+        let mut state = ReplayState {
+            recorded: RecordedIndex::build(&log),
+            pending: HashMap::new(), send_count: HashMap::new(),
+            divergences: Vec::new(), produced: HashSet::new(),
+        };
+        let mut d = ReplayDispatch { state: &mut state, current: ActorId::from("a") };
+        assert_eq!(d.next_msg_id(), 5); // 1st send -> m5 (the single recorded emit)
+        let sentinel = d.next_msg_id();  // 2nd send -> over-send path
+        assert!(sentinel >= u64::MAX - 100, "expected sentinel near u64::MAX, got {sentinel}");
+        assert_eq!(state.divergences.len(), 1, "expected exactly one over-send divergence");
+        assert!(state.divergences[0].detail.contains("more sends than the recording"));
     }
 
     #[test]
