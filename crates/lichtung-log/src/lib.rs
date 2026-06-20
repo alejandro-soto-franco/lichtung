@@ -101,9 +101,10 @@ mod tests {
     #[test]
     fn omits_none_optionals() {
         let mut e = sample();
-        e.payload_hash = None;
+        e.value = None; // Some(0.5) → None: real transition
         let s = serde_json::to_string(&e).unwrap();
         assert!(!s.contains("payload_hash"));
+        assert!(!s.contains("value"), "None fields must be omitted from wire form");
     }
 
     #[test]

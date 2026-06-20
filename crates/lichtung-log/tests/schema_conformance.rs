@@ -21,7 +21,7 @@ fn events() -> Vec<CausalEvent> {
         CausalEvent {
             id: "e2".into(),
             actor: "multiplier".into(),
-            seq: 0,
+            seq: 1,
             op: Op::Recv,
             vclock: BTreeMap::from([("rng".to_string(), 1), ("multiplier".to_string(), 1)]),
             lamport: 2,
