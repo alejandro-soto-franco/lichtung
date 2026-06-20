@@ -1,0 +1,10 @@
+[package]
+name = "lichtung-core"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lichtung-clock = { path = "../lichtung-clock" }
+lichtung-log = { path = "../lichtung-log" }
+serde = { workspace = true }

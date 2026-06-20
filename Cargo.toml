@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lichtung-clock", "crates/lichtung-log"]
+members = ["crates/lichtung-clock", "crates/lichtung-log", "crates/lichtung-core"]
 
 [workspace.package]
 edition = "2021"
@@ -13,3 +13,5 @@ serde_json = "1"
 thiserror = "2"
 proptest = "1"
 jsonschema = "0.20"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
+criterion = "0.5"
