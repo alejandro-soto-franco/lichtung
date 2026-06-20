@@ -16,3 +16,20 @@ the `concurrency-causality` analyzer). Runtime + replay + viz: M1–M3.
 
 - `lichtung-clock` — vector clocks, Lamport stamps, the causal order.
 - `lichtung-log` — the causal event log format and I/O.
+
+## Performance
+
+lichtung keeps the actor hot path allocation-light, in the spirit of
+fastwebsockets: `ActorId` is `Arc<str>` (clones are refcount bumps), each
+message costs one payload box + one vclock snapshot, per-actor clocks are owned
+(no shared locks), cross-task state is atomic, and the causal log is written by a
+single task that batches with a `BufWriter` and flushes only when its queue
+drains. Throughput is measured, not asserted:
+
+```
+cargo bench -p lichtung-prod
+```
+
+reports messages/second through a 4-stage relay. Future work: bounded mailboxes
+with `drop`-event backpressure, a thingbuf/flume `Mailbox` flavor selected by
+this benchmark, and integer-indexed vector clocks for very wide systems.
