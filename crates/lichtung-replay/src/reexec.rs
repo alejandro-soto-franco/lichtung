@@ -92,10 +92,16 @@ pub struct Divergence {
     pub detail: String,
 }
 
-/// The outcome of a replay run.
-pub enum ReplayOutcome {
-    Ok,
-    Diverged(Vec<Divergence>),
+/// The result of a replay: the canonical replayed artifacts plus any fidelity
+/// divergences detected by re-execution. Empty `divergences` == faithful replay.
+pub struct ReplayOutcome {
+    pub replayed: Replayed,
+    pub divergences: Vec<Divergence>,
+}
+impl ReplayOutcome {
+    pub fn is_faithful(&self) -> bool {
+        self.divergences.is_empty()
+    }
 }
 
 /// The single-threaded replay harness. Rebuild the identical topology, re-supply
@@ -218,6 +224,162 @@ impl<'a, 'b> Dispatch for ReplayDispatch<'a, 'b> {
     }
 }
 
+impl ReplaySystem {
+    /// Re-execute the recorded run. Runs the Phase 1 engine for the canonical order,
+    /// then re-drives `handle` over the recv events in that order — payloads from
+    /// re-execution, every produced event verified against the recording.
+    pub fn replay(mut self, log: &[CausalEvent]) -> Result<ReplayOutcome, ReplayError> {
+        // Phase 1: canonical timeline + poset (also validates the log).
+        let replayed = replay_log(log)?;
+
+        let mut state = ReplayState {
+            recorded: RecordedIndex::build(log),
+            pending: HashMap::new(),
+            send_count: HashMap::new(),
+            divergences: Vec::new(),
+            produced: HashSet::new(),
+        };
+        // Per-actor causal state (mirrors prod's per-task locals, persisted here).
+        let mut clocks: HashMap<ActorId, (VectorClock, Lamport, u64)> = self
+            .actors
+            .keys()
+            .map(|k| (k.clone(), (VectorClock::new(), Lamport::default(), 0)))
+            .collect();
+
+        // Seed origins: match each recorded `world` Emit to a re-supplied origin (in
+        // seq order). Reconstruct the origin envelope from the recorded emit + the
+        // user's message, mark the world emit produced, and stash it in `pending`.
+        let world = ActorId::from("world");
+        let world_emits: Vec<CausalEvent> = state
+            .recorded
+            .emits_by_actor
+            .get(world.as_str())
+            .map(|v| v.iter().map(|e| (*e).clone()).collect())
+            .unwrap_or_default();
+        for (k, we) in world_emits.iter().enumerate() {
+            let m = we.msg_id.as_deref().and_then(parse_mid).unwrap_or(0);
+            let (to_id, msg) = match self.origins.get_mut(k) {
+                Some((id, boxed)) => (id.clone(), std::mem::replace(boxed, Box::new(()))),
+                None => {
+                    state.divergences.push(Divergence {
+                        event_id: we.id.clone(),
+                        detail: "recorded a world origin with no re-supplied origin message".into(),
+                    });
+                    continue;
+                }
+            };
+            let env = Envelope {
+                msg,
+                vclock: vclock_from(&we.vclock),
+                lamport: Lamport(we.lamport),
+                msg_id: m,
+                src: world.clone(),
+                dst: to_id,
+            };
+            state.produced.insert(we.id.clone());
+            state.pending.insert(m, env);
+        }
+
+        // `started()` pass: run each actor's `started()` once, in NAME-SORTED order,
+        // so any messages an actor sends from `started()` are re-produced, verified,
+        // and stashed in `pending`. Counters are cumulative with the recv loop below
+        // (started-sends are an actor's first sends), so do NOT reset between passes.
+        let mut names: Vec<ActorId> = self.actors.keys().cloned().collect();
+        names.sort();
+        for name in &names {
+            self.drive(name, &mut clocks, &mut state, None);
+        }
+
+        // Walk the canonical timeline; drive `handle` on each recv. Emit/compute
+        // events are produced (and verified) as side effects of handlers, so they
+        // are skipped by the driver loop itself.
+        for ev in &replayed.timeline {
+            if ev.op != Op::Recv {
+                continue;
+            }
+            let dst = ActorId::from(ev.actor.as_str());
+            let m = match ev.msg_id.as_deref().and_then(parse_mid) {
+                Some(m) => m,
+                None => {
+                    state.divergences.push(Divergence {
+                        event_id: ev.id.clone(),
+                        detail: "recv has no msg_id".into(),
+                    });
+                    continue;
+                }
+            };
+            let env = match state.pending.remove(&m) {
+                Some(e) => e,
+                None => {
+                    state.divergences.push(Divergence {
+                        event_id: ev.id.clone(),
+                        detail: "no re-produced message for this recv (upstream divergence)".into(),
+                    });
+                    continue;
+                }
+            };
+
+            // Recv-stamp with the SAME §4 rule prod uses.
+            let entry = clocks
+                .entry(dst.clone())
+                .or_insert_with(|| (VectorClock::new(), Lamport::default(), 0));
+            entry.0.merge(&env.vclock);
+            entry.0.increment(&dst);
+            let lam = entry.1.update(env.lamport);
+            entry.2 += 1;
+            let produced_recv = recv_event(&dst, entry.2, &entry.0, lam, &env);
+            verify(&state.recorded, &produced_recv, &mut state.divergences, &mut state.produced);
+
+            if !self.actors.contains_key(&dst) {
+                state.divergences.push(Divergence {
+                    event_id: ev.id.clone(),
+                    detail: "recv for an actor not rebuilt in the ReplaySystem".into(),
+                });
+                continue;
+            }
+            // Run the handler. The split-borrow lives in `drive`.
+            self.drive(&dst, &mut clocks, &mut state, Some(env.msg));
+        }
+
+        // Completeness: every recorded event must have been re-produced.
+        for e in log {
+            if !state.produced.contains(&e.id) {
+                state.divergences.push(Divergence {
+                    event_id: e.id.clone(),
+                    detail: "recorded event was not re-produced by re-execution".into(),
+                });
+            }
+        }
+
+        Ok(ReplayOutcome { replayed, divergences: state.divergences })
+    }
+
+    /// Drive one actor under a `ReplayDispatch`: either its `started()` (when `msg`
+    /// is `None`) or one `handle` (when `msg` is `Some`). Centralizes the split
+    /// three-way borrow — `self.actors` (the handler), `clocks[dst]`
+    /// (clock/lamport/seq), and `state` (the dispatch backend) — into one place
+    /// where the disjointness is over named locals, so the borrow checker accepts it.
+    fn drive(
+        &mut self,
+        dst: &ActorId,
+        clocks: &mut HashMap<ActorId, (VectorClock, Lamport, u64)>,
+        state: &mut ReplayState<'_>,
+        msg: Option<Box<dyn Any + Send>>,
+    ) {
+        let actor = self.actors.get_mut(dst).expect("actor exists");
+        let entry = clocks
+            .entry(dst.clone())
+            .or_insert_with(|| (VectorClock::new(), Lamport::default(), 0));
+        let (clock, lamport, seq) = (&mut entry.0, &mut entry.1, &mut entry.2);
+        let mut backend = ReplayDispatch { state, current: dst.clone() };
+        let mut ctx = Context::new(dst, clock, lamport, seq, &mut backend);
+        match msg {
+            Some(m) => actor.handle_any(m, &mut ctx),
+            None => actor.started(&mut ctx),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +461,43 @@ mod tests {
         d.record(bad);
         assert_eq!(state.divergences.len(), 1);
         assert_eq!(state.divergences[0].event_id, "a:1");
+    }
+
+    // A relay actor that forwards n+1 to its `next`, and a sink that computes.
+    struct Relay {
+        next: Addr<u32>,
+    }
+    impl Actor for Relay {
+        type Msg = u32;
+        fn handle(&mut self, n: u32, ctx: &mut Context) {
+            ctx.send(&self.next, n + 1);
+        }
+    }
+    struct Sink;
+    impl Actor for Sink {
+        type Msg = u32;
+        fn handle(&mut self, _n: u32, ctx: &mut Context) {
+            ctx.compute();
+        }
+    }
+
+    #[test]
+    fn relay_log_re_executes_faithfully() {
+        // Hand-built recording of: world -> relay (m1); relay -> sink (m2); sink computes.
+        let log = vec![
+            CausalEvent { id: "world:1".into(), actor: "world".into(), seq: 1, op: Op::Emit, vclock: [("world".to_string(),1)].into(), lamport: 1, msg_id: Some("m1".into()), src: Some("world".into()), dst: Some("relay".into()), value: None, payload_hash: None },
+            CausalEvent { id: "relay:1".into(), actor: "relay".into(), seq: 1, op: Op::Recv, vclock: [("world".to_string(),1),("relay".to_string(),1)].into(), lamport: 2, msg_id: Some("m1".into()), src: Some("world".into()), dst: Some("relay".into()), value: None, payload_hash: None },
+            CausalEvent { id: "relay:2".into(), actor: "relay".into(), seq: 2, op: Op::Emit, vclock: [("world".to_string(),1),("relay".to_string(),2)].into(), lamport: 3, msg_id: Some("m2".into()), src: Some("relay".into()), dst: Some("sink".into()), value: None, payload_hash: None },
+            CausalEvent { id: "sink:1".into(), actor: "sink".into(), seq: 1, op: Op::Recv, vclock: [("world".to_string(),1),("relay".to_string(),2),("sink".to_string(),1)].into(), lamport: 4, msg_id: Some("m2".into()), src: Some("relay".into()), dst: Some("sink".into()), value: None, payload_hash: None },
+            CausalEvent { id: "sink:2".into(), actor: "sink".into(), seq: 2, op: Op::Compute, vclock: [("world".to_string(),1),("relay".to_string(),2),("sink".to_string(),2)].into(), lamport: 5, msg_id: None, src: None, dst: None, value: None, payload_hash: None },
+        ];
+        let mut sys = ReplaySystem::new();
+        let sink = sys.spawn("sink", Sink);
+        let relay = sys.spawn("relay", Relay { next: sink });
+        sys.origin(&relay, 1u32);
+        let outcome = sys.replay(&log).unwrap();
+        assert!(outcome.is_faithful(), "expected faithful replay, got {:?}", outcome.divergences);
+        assert_eq!(outcome.replayed.timeline.len(), 5);
     }
 
     #[test]
