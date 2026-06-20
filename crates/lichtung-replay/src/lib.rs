@@ -6,10 +6,12 @@ mod engine;
 mod error;
 mod extension;
 mod poset;
+mod reexec;
 
 pub use engine::{replay_log, PosetJson, Replayed};
 pub use error::ReplayError;
 pub use poset::Poset;
+pub use reexec::{Divergence, ReplayOutcome, ReplaySystem};
 
 #[cfg(test)]
 pub(crate) mod testlog {

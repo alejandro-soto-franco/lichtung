@@ -6,6 +6,12 @@ license.workspace = true
 
 [dependencies]
 lichtung-log = { path = "../lichtung-log" }
+lichtung-core = { path = "../lichtung-core" }
+lichtung-clock = { path = "../lichtung-clock" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+lichtung-prod = { path = "../lichtung-prod" }
+tokio = { workspace = true }
