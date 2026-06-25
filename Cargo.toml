@@ -5,7 +5,7 @@ members = ["crates/lichtung-clock", "crates/lichtung-log", "crates/lichtung-core
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/braidword/lichtung"
+repository = "https://github.com/alejandro-soto-franco/lichtung"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
