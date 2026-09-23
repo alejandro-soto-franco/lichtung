@@ -716,7 +716,6 @@ version = "0.0.0"
 dependencies = [
  "lichtung-clock",
  "lichtung-log",
- "serde",
 ]
 
 [[package]]
