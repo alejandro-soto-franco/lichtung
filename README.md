@@ -27,9 +27,9 @@ lichtung-prod  = { git = "https://github.com/alejandro-soto-franco/lichtung" }
 
 Add `lichtung-replay` for offline replay and fidelity checking.
 
-## Example: risk desk on real market data
+## Risk desk example on real market data
 
-`crates/lichtung-replay/examples/risk_desk.rs` runs an end-to-end showcase on
+`crates/lichtung-replay/examples/risk_desk.rs` runs an end-to-end example on
 real Binance BTC/ETH/SOL 1-minute klines (committed as fixtures). Ten actors:
 world feeds into fast (Black-Scholes) and slow (CRR binomial tree) pricers per
 symbol, which fan into a book aggregator (EWMA + last-write-wins) and a
@@ -51,7 +51,7 @@ Tunable via `LICHTUNG_TICKS` and `LICHTUNG_TREE`.
 ## Performance
 
 The actor hot path is allocation-light: `ActorId` is `Arc<str>` (clones are
-refcount bumps), each message costs one payload box plus one vclock snapshot,
+refcount bumps), each message allocates one payload box plus one vclock snapshot,
 per-actor clocks are owned with no shared locks, cross-task state is atomic, and
 the causal log is written by a single dedicated task that batches with a
 `BufWriter` and flushes only when its queue drains.
